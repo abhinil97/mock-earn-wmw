@@ -1,82 +1,43 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Button } from './ui/button.tsx'
-import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk'
-
-// Define Petra wallet types
-interface PetraWallet {
-  connect: () => Promise<{ address: string }>
-  disconnect: () => Promise<void>
-  account: () => Promise<{ address: string }>
-  isConnected: () => Promise<boolean>
-}
-
-declare global {
-  interface Window {
-    aptos?: PetraWallet
-  }
-}
+import { useWallet, groupAndSortWallets, WalletReadyState } from '@aptos-labs/wallet-adapter-react'
 
 export function Header() {
-  const [walletAddress, setWalletAddress] = useState<string | null>(null)
-  const [isConnecting, setIsConnecting] = useState(false)
+  const { account, connected, connect, disconnect, wallets } = useWallet()
+  const [isWalletSelectorOpen, setIsWalletSelectorOpen] = useState(false)
 
-  // Initialize Aptos client
-  const config = new AptosConfig({ network: Network.MAINNET })
-  const aptos = new Aptos(config)
+  // Group and sort wallets by ready state
+  const { availableWallets, installableWallets } = groupAndSortWallets(wallets)
 
-  // Check if wallet is already connected on mount
-  useEffect(() => {
-    checkWalletConnection()
-  }, [])
+  // Combine all wallets for display
+  const allWallets = [...availableWallets, ...installableWallets]
 
-  const checkWalletConnection = async () => {
-    if (window.aptos) {
-      try {
-        const isConnected = await window.aptos.isConnected()
-        if (isConnected) {
-          const account = await window.aptos.account()
-          setWalletAddress(account.address)
-        }
-      } catch (error) {
-        console.error('Error checking wallet connection:', error)
-      }
-    }
-  }
-
-  const connectWallet = async () => {
-    if (!window.aptos) {
-      alert('Petra Wallet is not installed. Please install it from the Chrome Web Store.')
-      window.open('https://petra.app/', '_blank')
-      return
-    }
-
-    setIsConnecting(true)
+  const handleConnect = async (walletName: string) => {
     try {
-      const response = await window.aptos.connect()
-      setWalletAddress(response.address)
-      console.log('Connected to wallet:', response.address)
+      await connect(walletName)
+      setIsWalletSelectorOpen(false)
     } catch (error) {
       console.error('Error connecting to wallet:', error)
-      alert('Failed to connect to Petra Wallet')
-    } finally {
-      setIsConnecting(false)
     }
   }
 
-  const disconnectWallet = async () => {
-    if (window.aptos) {
-      try {
-        await window.aptos.disconnect()
-        setWalletAddress(null)
-        console.log('Disconnected from wallet')
-      } catch (error) {
-        console.error('Error disconnecting from wallet:', error)
-      }
+  const handleDisconnect = async () => {
+    try {
+      await disconnect()
+    } catch (error) {
+      console.error('Error disconnecting from wallet:', error)
     }
   }
 
   const truncateAddress = (address: string) => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`
+  }
+
+  const getAddressString = () => {
+    if (!account?.address) return ''
+    return typeof account.address === 'string' 
+      ? account.address 
+      : account.address.toString()
   }
 
   return (
@@ -89,28 +50,76 @@ export function Header() {
         </div>
 
         <div className="flex items-center space-x-4">
-          {walletAddress ? (
+          {connected && account ? (
             <div className="flex items-center space-x-2">
               <div className="px-3 py-2 bg-muted rounded-md text-sm font-mono">
-                {truncateAddress(walletAddress)}
+                {truncateAddress(getAddressString())}
               </div>
               <Button
                 variant="outline"
-                onClick={disconnectWallet}
+                onClick={handleDisconnect}
               >
                 Disconnect
               </Button>
             </div>
           ) : (
-            <Button
-              onClick={connectWallet}
-              disabled={isConnecting}
-            >
-              {isConnecting ? 'Connecting...' : 'Connect Petra Wallet'}
-            </Button>
+            <div className="relative">
+              <Button
+                onClick={() => setIsWalletSelectorOpen(!isWalletSelectorOpen)}
+              >
+                Connect Wallet
+              </Button>
+
+              {isWalletSelectorOpen && (
+                <div className="absolute right-0 mt-2 w-64 bg-background border border-border rounded-lg shadow-lg z-50">
+                  <div className="p-2">
+                    <div className="text-sm font-semibold px-3 py-2 text-foreground">
+                      Select Wallet
+                    </div>
+                    <div className="space-y-1">
+                      {allWallets.map((wallet) => (
+                        <button
+                          key={wallet.name}
+                          onClick={() => {
+                            if (wallet.readyState === WalletReadyState.Installed) {
+                              handleConnect(wallet.name)
+                            } else {
+                              window.open(wallet.url, '_blank')
+                            }
+                          }}
+                          className="w-full flex items-center space-x-3 px-3 py-2 hover:bg-muted rounded-md transition-colors"
+                        >
+                          <img
+                            src={wallet.icon}
+                            alt={wallet.name}
+                            className="w-6 h-6"
+                          />
+                          <span className="text-sm font-medium text-foreground">
+                            {wallet.name}
+                          </span>
+                          {wallet.readyState === WalletReadyState.NotDetected && (
+                            <span className="ml-auto text-xs text-muted-foreground">
+                              Install
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
+
+      {/* Backdrop to close wallet selector */}
+      {isWalletSelectorOpen && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setIsWalletSelectorOpen(false)}
+        />
+      )}
     </header>
   )
 }
